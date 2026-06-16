@@ -74,17 +74,22 @@ jobs:
         run: |
           git fetch origin cado-overlay
           rm -rf /tmp/overlay && mkdir -p /tmp/overlay
-          git --work-tree=/tmp/overlay checkout origin/cado-overlay -- devices/ 2>/dev/null || \
-            git archive origin/cado-overlay devices/ | tar -x -C /tmp/overlay
-          echo "Overlay files:"; ls -1 /tmp/overlay/devices/
+          git archive origin/cado-overlay | tar -x -C /tmp/overlay
+          echo "Overlay device files:"; ls -1 /tmp/overlay/devices/
+          echo "Overlay workflow:"; ls -1 /tmp/overlay/.github/workflows/
 
       - name: Rebuild main on upstream + re-apply overlay
         if: steps.gate.outputs.proceed == 'true'
         run: |
           git reset --hard upstream/main
+          # Re-apply CADO device configs
           cp /tmp/overlay/devices/cado_*.yaml custom_components/tuya_local/devices/
           git add custom_components/tuya_local/devices/cado_*.yaml
-          echo "Re-applied $(ls custom_components/tuya_local/devices/cado_*.yaml | wc -l) CADO files"
+          # Re-apply the sync workflow itself (upstream reset would delete it otherwise)
+          mkdir -p .github/workflows
+          cp /tmp/overlay/.github/workflows/sync-upstream.yml .github/workflows/sync-upstream.yml
+          git add .github/workflows/sync-upstream.yml
+          echo "Re-applied $(ls custom_components/tuya_local/devices/cado_*.yaml | wc -l) CADO files + sync workflow"
 
       - name: Set up Python
         if: steps.gate.outputs.proceed == 'true'
