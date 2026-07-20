@@ -1,0 +1,142 @@
+name: Robot vacuum
+products:
+  - id: k8ttkrhlqtnfd8e9
+    manufacturer: Eufy
+    model: S1 Pro
+    model_id: T2080
+entities:
+  - entity: vacuum
+    dps:
+      - id: 152
+        type: base64
+        name: command
+        mapping:
+          - dps_val: AA==
+            value: start
+            constraint: status
+            conditions:
+              - dps_val: smart
+                value: start
+          - dps_val: AggO
+            value: start
+            hidden: true
+          - dps_val: AggN
+            value: pause
+            constraint: status
+            conditions:
+              - dps_val: pause
+                value: pause
+          - dps_val: AggG
+            value: return_to_base
+            constraint: status
+            conditions:
+              - dps_val: charge
+                value: return_to_base
+      - id: 5
+        type: string
+        name: status
+        mapping:
+          - dps_val: standby
+            value: standby
+          - dps_val: smart
+            value: cleaning
+          - dps_val: pause
+            value: paused
+          - dps_val: charge
+            value: returning
+      - id: 9
+        type: string
+        name: fan_speed
+        mapping:
+          - dps_val: gentle
+            value: Quiet
+            constraint: fan_profile
+            conditions:
+              - dps_val: Quiet
+                value: Quiet
+          - dps_val: normal
+            value: Standard
+            constraint: fan_profile
+            conditions:
+              - dps_val: Standard
+                value: Standard
+          - dps_val: strong
+            value: Turbo
+            constraint: fan_profile
+            conditions:
+              - dps_val: Turbo
+                value: Turbo
+          - dps_val: max
+            value: Maximum
+            constraint: fan_profile
+            conditions:
+              - dps_val: Max
+                value: Maximum
+      - id: 158
+        type: string
+        name: fan_profile
+        hidden: true
+        mapping:
+          - dps_val: Quiet
+            value: Quiet
+          - dps_val: Standard
+            value: Standard
+          - dps_val: Turbo
+            value: Turbo
+          - dps_val: Max
+            value: Maximum
+  - entity: sensor
+    class: battery
+    dps:
+      - id: 8
+        type: integer
+        name: sensor
+        unit: "%"
+        class: measurement
+  - entity: select
+    translation_key: mopping
+    category: config
+    dps:
+      - id: 10
+        type: string
+        name: option
+        mapping:
+          - dps_val: low
+            value: low
+          - dps_val: middle
+            value: medium
+          - dps_val: high
+            value: high
+  - entity: binary_sensor
+    name: Mop installed
+    icon: "mdi:water-plus"
+    category: diagnostic
+    dps:
+      - id: 40
+        type: string
+        name: sensor
+        mapping:
+          - dps_val: installed
+            value: true
+          - value: false
+  - entity: select
+    translation_key: cleaning_mode
+    category: config
+    dps:
+      - id: 41
+        type: string
+        name: option
+        mapping:
+          - dps_val: only_sweep
+            value: sweep
+          - dps_val: only_mop
+            value: mop
+          - dps_val: both_work
+            value: sweep_and_mop
+  - entity: switch
+    name: Auto-return cleaning
+    category: config
+    dps:
+      - id: 156
+        type: boolean
+        name: switch
