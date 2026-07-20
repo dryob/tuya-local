@@ -45,7 +45,7 @@ jobs:
       - name: Add upstream + fetch
         run: |
           git remote add upstream https://github.com/make-all/tuya-local.git
-          git fetch upstream main --tags
+          git fetch upstream main
 
       - name: Capture versions
         id: ver
