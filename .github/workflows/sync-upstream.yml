@@ -85,11 +85,14 @@ jobs:
           # Re-apply CADO device configs
           cp /tmp/overlay/devices/cado_*.yaml custom_components/tuya_local/devices/
           git add custom_components/tuya_local/devices/cado_*.yaml
-          # Re-apply the sync workflow itself (upstream reset would delete it otherwise)
-          mkdir -p .github/workflows
-          cp /tmp/overlay/.github/workflows/sync-upstream.yml .github/workflows/sync-upstream.yml
-          git add .github/workflows/sync-upstream.yml
-          echo "Re-applied $(ls custom_components/tuya_local/devices/cado_*.yaml | wc -l) CADO files + sync workflow"
+          # Freeze .github/workflows to the fork's own set: GITHUB_TOKEN lacks
+          # `workflows` permission, so any upstream workflow-file diff would be
+          # rejected on push ("refusing to allow a GitHub App to create or
+          # update workflow"). Workflow changes ship manually via PAT.
+          rm -rf .github/workflows
+          git checkout origin/main -- .github/workflows
+          git add -A .github/workflows
+          echo "Re-applied $(ls custom_components/tuya_local/devices/cado_*.yaml | wc -l) CADO files; workflows frozen to fork main"
 
       - name: Set up Python
         if: steps.gate.outputs.proceed == 'true'
@@ -143,4 +146,4 @@ jobs:
           if ! gh issue list --repo "$REPO" --search "$TITLE in:title state:open" --json number --jq 'length' | grep -q '^[1-9]'; then
             gh issue create --repo "$REPO" --title "$TITLE" \
               --body "The daily upstream sync failed — likely the CADO device configs no longer pass \`test_device_config.py\` against upstream v${{ steps.ver.outputs.upstream_ver }} (schema change), or a merge/build error. main was NOT updated, so your running install is unaffected. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Fix the CADO yamls on the \`cado-overlay\` branch, then re-run."
-          fi
+          fi || echo "issue notify skipped (issues disabled)"
