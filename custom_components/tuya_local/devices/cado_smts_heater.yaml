@@ -41,7 +41,7 @@ entities:
         type: boolean
         name: lock
   - entity: select
-    name: Timer
+    translation_key: timer
     category: config
     dps:
       - id: 19
