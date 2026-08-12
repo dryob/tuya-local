@@ -1,0 +1,149 @@
+name: Sync from upstream make-all/tuya-local
+
+# Rebuilds this fork's `main` from upstream make-all/tuya-local, then
+# re-applies the CADO device overlay (the 6 yamls this fork adds) from the
+# `cado-overlay` branch. Validates against the rebuilt tree before pushing.
+#
+# Why not a plain merge: upstream has none of the CADO files and moves fast
+# (hundreds of commits). A merge would create noise and risk drift. Instead we
+# hard-reset main to upstream and re-stack the overlay — deterministic and clean.
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # daily 03:00 JST (18:00 UTC prev day)
+  workflow_dispatch:        # manual "Run workflow" button
+    inputs:
+      force_push:
+        description: 'Push even if no upstream changes'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (main)
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream + fetch
+        run: |
+          git remote add upstream https://github.com/make-all/tuya-local.git
+          git fetch upstream main
+
+      - name: Capture versions
+        id: ver
+        run: |
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          CURRENT_BASE=$(git log main --grep="sync-base:" -1 --pretty=%B 2>/dev/null | grep -oE 'sync-base:[0-9a-f]+' | cut -d: -f2 || echo "")
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "current_base=$CURRENT_BASE" >> "$GITHUB_OUTPUT"
+          UPSTREAM_VER=$(git show upstream/main:custom_components/tuya_local/manifest.json | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")
+          echo "upstream_ver=$UPSTREAM_VER" >> "$GITHUB_OUTPUT"
+          echo "Upstream main: $UPSTREAM_SHA (v$UPSTREAM_VER)"
+          echo "Current fork base: ${CURRENT_BASE:-unknown}"
+
+      - name: Skip if already up to date
+        id: gate
+        run: |
+          if [ "${{ steps.ver.outputs.upstream_sha }}" = "${{ steps.ver.outputs.current_base }}" ] && [ "${{ inputs.force_push }}" != "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Already at upstream ${{ steps.ver.outputs.upstream_sha }} — nothing to do."
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch CADO overlay
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          git fetch origin cado-overlay
+          rm -rf /tmp/overlay && mkdir -p /tmp/overlay
+          git archive origin/cado-overlay | tar -x -C /tmp/overlay
+          echo "Overlay device files:"; ls -1 /tmp/overlay/devices/
+          echo "Overlay workflow:"; ls -1 /tmp/overlay/.github/workflows/
+
+      - name: Rebuild main on upstream + re-apply overlay
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          git reset --hard upstream/main
+          # Re-apply CADO device configs
+          cp /tmp/overlay/devices/cado_*.yaml custom_components/tuya_local/devices/
+          git add custom_components/tuya_local/devices/cado_*.yaml
+          # Freeze .github/workflows to the fork's own set: GITHUB_TOKEN lacks
+          # `workflows` permission, so any upstream workflow-file diff would be
+          # rejected on push ("refusing to allow a GitHub App to create or
+          # update workflow"). Workflow changes ship manually via PAT.
+          rm -rf .github/workflows
+          git checkout origin/main -- .github/workflows
+          git add -A .github/workflows
+          echo "Re-applied $(ls custom_components/tuya_local/devices/cado_*.yaml | wc -l) CADO files; workflows frozen to fork main"
+
+      - name: Set up Python
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Set up uv
+        if: steps.gate.outputs.proceed == 'true'
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate device configs (incl. CADO overlay)
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          echo "=== Validating all device configs against rebuilt upstream tree ==="
+          uv run pytest tests/test_device_config.py -q
+
+      - name: Commit + push rebuilt main
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          git commit -m "Sync upstream make-all/tuya-local @ v${{ steps.ver.outputs.upstream_ver }} + CADO overlay
+
+          sync-base:${{ steps.ver.outputs.upstream_sha }}
+          Re-applied 6 CADO device configs. Validated: tests/test_device_config.py passed."
+          git push -f origin main
+          echo "Pushed rebuilt main."
+
+      - name: Create/refresh release
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${{ steps.ver.outputs.upstream_ver }}"
+          REPO="${{ github.repository }}"
+          if gh release view "$VER" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $VER already exists — skipping."
+          else
+            gh release create "$VER" --repo "$REPO" --target main \
+              --title "$VER (upstream sync + CADO overlay)" \
+              --notes "Auto-synced from make-all/tuya-local @ v$VER. Re-applied 6 CADO device configs (cado_smt_heater = SM-C001-single / ffypxhkzmww2kigw). Validated test_device_config.py."
+            echo "Created release $VER"
+          fi
+
+      - name: On failure, open an issue
+        if: failure() && steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          TITLE="Upstream sync failed for v${{ steps.ver.outputs.upstream_ver }}"
+          if ! gh issue list --repo "$REPO" --search "$TITLE in:title state:open" --json number --jq 'length' | grep -q '^[1-9]'; then
+            gh issue create --repo "$REPO" --title "$TITLE" \
+              --body "The daily upstream sync failed — likely the CADO device configs no longer pass \`test_device_config.py\` against upstream v${{ steps.ver.outputs.upstream_ver }} (schema change), or a merge/build error. main was NOT updated, so your running install is unaffected. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Fix the CADO yamls on the \`cado-overlay\` branch, then re-run."
+          fi || echo "issue notify skipped (issues disabled)"
